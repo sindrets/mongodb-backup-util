@@ -25,7 +25,7 @@ export class FlagParser extends Map<string,string> {
             result += `,${sep}'${key}' => '${this.get(key)}'`;
         }
         
-        return `[Map] { ${result.substr(2)} }`;
+        return `[FlagParser] { ${result.substr(2)} }`;
         
     }
 

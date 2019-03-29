@@ -80,7 +80,7 @@ export class Logger {
      * @param optionalParams 
      */
     public static error(message?: any, ...optionalParams: any[]): void {
-        console.error(message, ...optionalParams);
+        console.error(chalk.red(message), ...optionalParams);
     }
 
 }

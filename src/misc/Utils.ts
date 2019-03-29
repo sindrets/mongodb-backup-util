@@ -139,7 +139,7 @@ export class Utils {
 	 */
 	public static unquote(text: string): string {
 		let result = text;
-		let match = text.match(/((^(?!\\)["'])(.*)((?<!\\)\2$))/g);
+		let match = text.match(/((^(?!\\)["'`])(.*)((?<!\\)\2$))/g);
 		if (match) {
 			result = match[0].substr(1, match[0].length-2);
 		}
