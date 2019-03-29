@@ -145,5 +145,13 @@ export class Utils {
 		}
 		return result;
 	}
+
+	public static isYes(s: string, def=false): boolean {
+		if (s.trim().match(/(^y$)|(^yes$)/gi) != null)
+			return true;
+		if (s.trim().match(/(^n$)|(^no$)/gi) != null)
+			return false;
+		return def;
+	}
 	
 }

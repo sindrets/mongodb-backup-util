@@ -1,22 +1,26 @@
 import * as BSON from "bson";
 import config from "config.json";
+import { GlobalEvent } from "Constants";
 import { DbRemote } from "DbRemote";
+import { EventHandler } from "EventHandler";
 import fs from "fs";
 import { Globals } from "Globals";
 import { Logger } from "Logger";
 import { MongoError } from "mongodb";
 import schedule from "node-schedule";
+import os from "os";
 import path from "path";
 import moment = require("moment");
-import { EventHandler } from "EventHandler";
-import { GlobalEvent } from "Constants";
-import os from "os";
+import readline from "readline";
+import { Utils } from "misc/Utils";
 
 export class BackupUtil {
 
+	private readonly BAK_NAME_PATTERN = /^.*-[0-9]{6}-[0-9]{6}$/g;
 	private TARGET_DIR: string = "";
 
 	private dbRemote: DbRemote;
+	private rl?: readline.Interface;
 
 	constructor() {
 
@@ -26,9 +30,11 @@ export class BackupUtil {
 
 		this.dbRemote = new DbRemote(Globals.flags.get("db"));
 
-		if (Globals.args[0] == "backup") this.backup();
-		else if (Globals.args[0] == "restore") this.restore();
-		else if (Globals.args[0] == "ls") this.printBackups();
+		switch (Globals.args[0]) {
+			case "backup": this.backup(); break;
+			case "restore": this.restore(); break;
+			case "ls": this.printBackups(); break;
+		}
 
 	}
 
@@ -40,6 +46,21 @@ export class BackupUtil {
 
 	}
 
+	private resolvePath(s: string): string {
+		return path.resolve(s.replace(/^~(?=$|\/)/g, os.homedir()));
+	}
+
+	private rlOpen(): readline.Interface {
+		return this.rl = readline.createInterface({
+			input: process.stdin,
+			output: process.stdout
+		});
+	}
+
+	private rlClose(): void {
+		if (this.rl) this.rl.close();
+	}
+
 	private backup(query?: { [key: string]: any; } | { [x: string]: any; }) {
 
 		this.TARGET_DIR = Globals.flags.get("path") || config.path;
@@ -47,9 +68,8 @@ export class BackupUtil {
 			Logger.error("Backup path was not provided nor defined in config.json!");
 			return;
 		}
-		
-		// resolve ~
-		this.TARGET_DIR = path.resolve(this.TARGET_DIR.replace(/^~(?=$|\/)/g, os.homedir()));
+
+		this.TARGET_DIR = this.resolvePath(this.TARGET_DIR);
 
 		this.dbRemote.connect().then(db => {
 			this.dbRemote.getAllCollections().then(collections => {
@@ -103,7 +123,7 @@ export class BackupUtil {
 
 	}
 
-	public restore() {
+	public restore(force = false) {
 
 		this.TARGET_DIR = Globals.flags.get("path") || Globals.args[1] || "";
 
@@ -120,8 +140,16 @@ export class BackupUtil {
 			return;
 		}
 
-		// resolve ~
-		this.TARGET_DIR = path.resolve(this.TARGET_DIR.replace(/^~(?=$|\/)/g, os.homedir()));
+		this.TARGET_DIR = this.resolvePath(this.TARGET_DIR);
+
+		if (!force && path.basename(this.TARGET_DIR).match(this.BAK_NAME_PATTERN) == null) {
+			Logger.warn("The target dir does not follow the standard name pattern for an mbu backup: " + this.TARGET_DIR);
+			this.rlOpen().question("Are you sure you want to proceed? y/N: ", result => {
+				this.rlClose();
+				if (Utils.isYes(result, false)) this.restore(true);
+			});
+			return;
+		}
 
 		this.dbRemote.connect().then(db => {
 			fs.readdirSync(this.TARGET_DIR).forEach((sCollection, index, c) => {
@@ -195,20 +223,27 @@ export class BackupUtil {
 			return;
 		}
 
-		// resolve ~
-		this.TARGET_DIR = path.resolve(this.TARGET_DIR.replace(/^~(?=$|\/)/g, os.homedir()));
+		this.TARGET_DIR = this.resolvePath(this.TARGET_DIR);
 
 		Logger.println("Available backups:");
-		
-		fs.readdirSync(this.TARGET_DIR || config.path).forEach(sCollection => {
-			Logger.println(path.join(this.TARGET_DIR || config.path, sCollection));
+
+		let count = 0;
+		fs.readdirSync(this.TARGET_DIR || config.path).forEach(sDb => {
+			// assert that the folder follows naming conventions
+			if (sDb.match(this.BAK_NAME_PATTERN) != null) {
+				count++;
+				Logger.println(path.join(this.TARGET_DIR || config.path, sDb));
+			}
 		});
+
+		if (count == 0) {
+			Logger.println("No backups found.");
+		}
 
 	}
 
 	public async exit(): Promise<void> {
 
-		Logger.println("Closing connections and exiting...");
 		if (this.dbRemote) {
 			await this.dbRemote.disconnect();
 		}
