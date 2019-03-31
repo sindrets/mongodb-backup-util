@@ -5,6 +5,7 @@ import { EventHandler } from "EventHandler";
 import { Logger } from "Logger";
 import { Collection, Db, MongoClient } from "mongodb";
 import assert = require("assert");
+import { sprintf } from "sprintf-js";
 
 export class DbRemote {
 
@@ -15,25 +16,29 @@ export class DbRemote {
     private db: Db | undefined;
 
     constructor(dbName?: string) {
-        this.uri = auth.DB_SRV;
+        this.uri = sprintf(auth.DB_SRV, auth.DB_U, auth.DB_P);
         this.dbName = dbName != undefined ? dbName : config.dbName;
     }
 
-    public async connect(): Promise<Db> {
+    public async connect(user?: string, pass?: string): Promise<Db> {
 
         return new Promise((resolve, reject) => {
 
+            if (user != undefined && pass != undefined) {
+                this.uri = sprintf(auth.DB_SRV, user, pass);
+            }
+
             if (this.dbName.length == 0) {
-                Logger.warn("No db name was provided and 'dbName' was unset in config.json!");
-                Logger.warn("Please specify a db with --db='<db-name>', or define 'dbName' in config.json.");
+                Logger.error("No db name was provided and 'dbName' was unset in config.json!");
+                Logger.println("Please specify a db with --db='<db-name>', or define 'dbName' in config.json.");
                 EventHandler.trigger(GlobalEvent.EXIT, true);
                 reject();
                 return;
             }
 
             if (this.uri.length == 0) {
-                Logger.warn("No db srv uri was provided in auth.json!");
-                Logger.warn("Please define 'DB_SRV' in auth.json.");
+                Logger.error("No db srv uri was provided in auth.json!");
+                Logger.println("Please define 'DB_SRV' in auth.json.");
                 EventHandler.trigger(GlobalEvent.EXIT, true);
                 reject();
                 return;

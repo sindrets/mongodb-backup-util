@@ -6,18 +6,19 @@ import { EventHandler } from "EventHandler";
 import fs from "fs";
 import { Globals } from "Globals";
 import { Logger } from "Logger";
+import { Utils } from "misc/Utils";
 import { MongoError } from "mongodb";
 import schedule from "node-schedule";
 import os from "os";
 import path from "path";
-import moment = require("moment");
 import readline from "readline";
-import { Utils } from "misc/Utils";
+import moment = require("moment");
+import auth from "auth.json";
+import passPrompt from "password-prompt";
 
 export class BackupUtil {
 
 	private readonly BAK_NAME_PATTERN = /^.*-[0-9]{6}-[0-9]{6}$/g;
-	private TARGET_DIR: string = "";
 
 	private dbRemote: DbRemote;
 	private rl?: readline.Interface;
@@ -31,9 +32,9 @@ export class BackupUtil {
 		this.dbRemote = new DbRemote(Globals.flags.get("db"));
 
 		switch (Globals.args[0]) {
-			case "backup": this.backup(); break;
-			case "restore": this.restore(); break;
-			case "ls": this.printBackups(); break;
+			case "backup": case "b": this.backup(); break;
+			case "restore": case "r": this.restore(); break;
+			case "ls": this.printBackups(Globals.args[1]); break;
 		}
 
 	}
@@ -63,26 +64,26 @@ export class BackupUtil {
 
 	private backup(query?: { [key: string]: any; } | { [x: string]: any; }) {
 
-		this.TARGET_DIR = Globals.flags.get("path") || config.path;
-		if (this.TARGET_DIR.length == 0) {
+		let targetDir = Globals.flags.get("path") || config.path;
+		if (targetDir.length == 0) {
 			Logger.error("Backup path was not provided nor defined in config.json!");
 			return;
 		}
 
-		this.TARGET_DIR = this.resolvePath(this.TARGET_DIR);
+		targetDir = this.resolvePath(targetDir);
 
 		this.dbRemote.connect().then(db => {
 			this.dbRemote.getAllCollections().then(collections => {
 
 				let now = moment();
 
-				if (!fs.existsSync(this.TARGET_DIR)) {
-					fs.mkdirSync(this.TARGET_DIR);
-					Logger.info("Backup root folder created at: " + this.TARGET_DIR);
+				if (!fs.existsSync(targetDir)) {
+					fs.mkdirSync(targetDir);
+					Logger.info("Backup root folder created at: " + targetDir);
 				}
 
 				let bakName: string = `${db.databaseName}-${now.format("YYMMDD-HHmmss")}`;
-				let bakPath: string = path.join(this.TARGET_DIR, bakName);
+				let bakPath: string = path.join(targetDir, bakName);
 				if (fs.existsSync(bakPath)) {
 					Logger.error("A backup by that name alreay exists: " + bakPath);
 					this.exit();
@@ -125,25 +126,25 @@ export class BackupUtil {
 
 	public restore(force = false) {
 
-		this.TARGET_DIR = Globals.flags.get("path") || Globals.args[1] || "";
+		let targetDir = Globals.flags.get("path") || Globals.args[1] || "";
 
 		if (Globals.args[1] == "ls") {
 			this.printBackups();
 			return;
 		}
-		if (this.TARGET_DIR.length == 0) {
+		if (targetDir.length == 0) {
 			Logger.error("Restore path was not provided!");
 			return;
 		}
-		else if (!fs.existsSync(this.TARGET_DIR)) {
+		else if (!fs.existsSync(targetDir)) {
 			Logger.error("The provided restore point does not exist!");
 			return;
 		}
 
-		this.TARGET_DIR = this.resolvePath(this.TARGET_DIR);
+		targetDir = this.resolvePath(targetDir);
 
-		if (!force && path.basename(this.TARGET_DIR).match(this.BAK_NAME_PATTERN) == null) {
-			Logger.warn("The target dir does not follow the standard name pattern for an mbu backup: " + this.TARGET_DIR);
+		if (!force && path.basename(targetDir).match(this.BAK_NAME_PATTERN) == null) {
+			Logger.warn("The target dir does not follow the standard name pattern for an mbu backup: " + targetDir);
 			this.rlOpen().question("Are you sure you want to proceed? y/N: ", result => {
 				this.rlClose();
 				if (Utils.isYes(result, false)) this.restore(true);
@@ -151,94 +152,132 @@ export class BackupUtil {
 			return;
 		}
 
-		this.dbRemote.connect().then(db => {
-			fs.readdirSync(this.TARGET_DIR).forEach((sCollection, index, c) => {
+		Logger.println(`Enter password for user '${auth.DB_U}':`);
+		passPrompt("Password: ", { method: "hide" }).then(response => {
 
-				let resolve = (success: boolean) => {
-					if (!success) {
-						Logger.error("Failed to drop collection: " + sCollection);
-						this.exit();
-						return;
-					}
-					else if (db) {
-						let collection = db.collection(sCollection);
-						let docBulk: object[] = [];
+			if (response !== auth.DB_P) {
+				Logger.error("Authentication failure.");
+				this.exit();
+				return;
+			}
+			else {
 
-						let collectionPath = path.join(this.TARGET_DIR, sCollection);
-						fs.readdirSync(collectionPath).forEach(sDoc => {
-
-							let doc: any;
-							let docPath = path.join(collectionPath, sDoc);
-							Logger.debugln("Deserializing doc from: " + docPath);
-
-							try {
-								doc = BSON.deserialize(fs.readFileSync(docPath));
-							}
-							catch (err) {
-								Logger.error("Failed to deserialize backup document: " + docPath, err);
+				this.dbRemote.connect().then(db => {
+					fs.readdirSync(targetDir).forEach((sCollection, index, c) => {
+		
+						let resolve = (success: boolean) => {
+							if (!success) {
+								Logger.error("Failed to drop collection: " + sCollection);
 								this.exit();
 								return;
 							}
-
-							if (doc) docBulk.push({
-								insertOne: {
-									document: doc
+							else if (db) {
+								let collection = db.collection(sCollection);
+								let docBulk: object[] = [];
+		
+								let collectionPath = path.join(targetDir, sCollection);
+								fs.readdirSync(collectionPath).forEach(sDoc => {
+		
+									let doc: any;
+									let docPath = path.join(collectionPath, sDoc);
+									Logger.debugln("Deserializing doc from: " + docPath);
+		
+									try {
+										doc = BSON.deserialize(fs.readFileSync(docPath));
+									}
+									catch (err) {
+										Logger.error("Failed to deserialize backup document: " + docPath, err);
+										this.exit();
+										return;
+									}
+		
+									if (doc) docBulk.push({
+										insertOne: {
+											document: doc
+										}
+									});
+		
+								})
+		
+								let callback = (err: MongoError, result: any) => {
+									if (err) Logger.error(err);
+									if (result) Logger.info(`Restored collection '${sCollection}' from backup!`);
+									if (index == c.length - 1) {
+										Logger.success("Backup restore completed!");
+										this.exit();
+									}
 								}
-							});
-
-						})
-
-						let callback = (err: MongoError, result: any) => {
-							if (err) Logger.error(err);
-							if (result) Logger.info(`Restored collection '${sCollection}' from backup!`);
-							if (index == c.length - 1) {
-								Logger.success("Backup restore completed!");
-								this.exit();
+		
+								if (docBulk.length > 0) {
+									collection.bulkWrite(docBulk, callback);
+								}
+								else {
+									db.createCollection(sCollection, callback);
+								}
 							}
 						}
-
-						if (docBulk.length > 0) {
-							collection.bulkWrite(docBulk, callback);
-						}
-						else {
-							db.createCollection(sCollection, callback);
-						}
-					}
-				}
-
-				db.dropCollection(sCollection).then(resolve, () => { resolve(true) });
-
-			})
+		
+						db.dropCollection(sCollection).then(resolve, () => { resolve(true) });
+		
+					})
+				})
+				
+			}
+			
 		})
 
 	}
 
-	public printBackups(): void {
+	public printBackups(dir?: string): void {
 
-		this.TARGET_DIR = Globals.flags.get("path") || config.path;
-		if (this.TARGET_DIR.length == 0) {
+		let targetDir = Globals.flags.get("path") || dir || config.path || "";
+		if (targetDir.length == 0) {
 			Logger.warn("No path was provided and 'path' was unset in config.json!");
 			Logger.warn("Please specify a path with --path=<path>, or define 'path' in config.json.");
-			this.exit();
 			return;
 		}
 
-		this.TARGET_DIR = this.resolvePath(this.TARGET_DIR);
+		targetDir = this.resolvePath(targetDir);
+		if (!fs.existsSync(targetDir)) {
+			Logger.error("The target directory does not exist: " + targetDir);
+			return;
+		}
 
-		Logger.println("Available backups:");
+		let all = Globals.flags.isTrue(["all", "a"]);
+		if (all) Logger.println("Available backups:");
+		else Logger.println(`Available backups (last ${config.lsLimit}):`);
 
-		let count = 0;
-		fs.readdirSync(this.TARGET_DIR || config.path).forEach(sDb => {
-			// assert that the folder follows naming conventions
-			if (sDb.match(this.BAK_NAME_PATTERN) != null) {
-				count++;
-				Logger.println(path.join(this.TARGET_DIR || config.path, sDb));
+		let files = fs.readdirSync(targetDir || config.path);
+
+		// sort files by name, descending
+		files = files.sort((a, b) => {
+			if (a < b) return 1;
+			if (a > b) return -1;
+			return 0;
+		})
+		
+		// remove elements that don't follow naming conventions
+		let offset = 0;
+		files.slice(0).forEach((s, i, a) => {
+			if (s.match(this.BAK_NAME_PATTERN) == null) {
+				files.splice(i - offset++, 1);
+			}
+		})
+
+		if (files.length == 0) {
+			Logger.println("No backups found.");
+			return;
+		}
+
+		let limit = config.lsLimit;
+
+		if (all) limit = files.length;
+
+		files.forEach((bakName, i) => {
+			if (i <= limit-1) {
+				Logger.println(path.join(targetDir, bakName));
 			}
 		});
-
-		if (count == 0) {
-			Logger.println("No backups found.");
-		}
 
 	}
 
