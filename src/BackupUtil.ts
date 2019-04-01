@@ -1,20 +1,23 @@
+import auth from "auth.json";
 import * as BSON from "bson";
 import config from "config.json";
 import { GlobalEvent } from "Constants";
+import cronParser from "cron-parser";
 import { DbRemote } from "DbRemote";
 import { EventHandler } from "EventHandler";
 import fs from "fs";
 import { Globals } from "Globals";
+import { CronFields } from "Interfaces";
 import { Logger } from "Logger";
+import { printNextInvocations, scheduleJobUtc } from "misc/ScheduleJobUtc";
 import { Utils } from "misc/Utils";
 import { MongoError } from "mongodb";
-import schedule from "node-schedule";
 import os from "os";
+import passPrompt from "password-prompt";
 import path from "path";
 import readline from "readline";
 import moment = require("moment");
-import auth from "auth.json";
-import passPrompt from "password-prompt";
+import { sprintf } from "sprintf-js";
 
 export class BackupUtil {
 
@@ -31,19 +34,16 @@ export class BackupUtil {
 
 		this.dbRemote = new DbRemote(Globals.flags.get("db"));
 
-		switch (Globals.args[0]) {
-			case "backup": case "b": this.backup(); break;
-			case "restore": case "r": this.restore(); break;
-			case "ls": this.printBackups(Globals.args[1]); break;
+		if (Globals.flags.size == 0) {
+			this.printHelp();
+			return;
 		}
 
-	}
-
-	public static PrintNextInvocations(): void {
-
-		for (let job in schedule.scheduledJobs) {
-			Logger.info(`Job <${job}> next invocation: ` + schedule.scheduledJobs[job].nextInvocation());
-		}
+		if (Globals.flags.isTrue(["help", "h"])) this.printHelp();
+		if (Globals.flags.isTrue(["backup", "b"])) this.backup();
+		if (Globals.flags.isTrue(["restore", "r"])) this.restore();
+		if (Globals.flags.isTrue(["list", "l"])) this.printBackups(Globals.args[0]);
+		if (Globals.flags.isTrue(["schedule", "s"])) this.schedule();
 
 	}
 
@@ -62,7 +62,7 @@ export class BackupUtil {
 		if (this.rl) this.rl.close();
 	}
 
-	private backup(query?: { [key: string]: any; } | { [x: string]: any; }) {
+	public async backup(query?: { [key: string]: any; } | { [x: string]: any; }) {
 
 		let targetDir = Globals.flags.get("path") || config.path;
 		if (targetDir.length == 0) {
@@ -124,11 +124,11 @@ export class BackupUtil {
 
 	}
 
-	public restore(force = false) {
+	public async restore(force = false) {
 
-		let targetDir = Globals.flags.get("path") || Globals.args[1] || "";
+		let targetDir = Globals.flags.get("path") || Globals.args[0] || "";
 
-		if (Globals.args[1] == "ls") {
+		if (Globals.args[0] == "ls") {
 			this.printBackups();
 			return;
 		}
@@ -152,78 +152,73 @@ export class BackupUtil {
 			return;
 		}
 
+		let response: string = "";
 		Logger.println(`Enter password for user '${auth.DB_U}':`);
-		passPrompt("Password: ", { method: "hide" }).then(response => {
+		await passPrompt("Password: ", { method: "hide" }).then(resp => response = resp);
 
-			if (response !== auth.DB_P) {
-				Logger.error("Authentication failure.");
-				this.exit();
-				return;
-			}
-			else {
+		if (response !== auth.DB_P) {
+			Logger.error("Authentication failure.");
+			return;
+		}
 
-				this.dbRemote.connect().then(db => {
-					fs.readdirSync(targetDir).forEach((sCollection, index, c) => {
-		
-						let resolve = (success: boolean) => {
-							if (!success) {
-								Logger.error("Failed to drop collection: " + sCollection);
+		this.dbRemote.connect().then(db => {
+			fs.readdirSync(targetDir).forEach((sCollection, index, c) => {
+
+				let resolve = (success: boolean) => {
+					if (!success) {
+						Logger.error("Failed to drop collection: " + sCollection);
+						this.exit();
+						return;
+					}
+					else if (db) {
+						let collection = db.collection(sCollection);
+						let docBulk: object[] = [];
+
+						let collectionPath = path.join(targetDir, sCollection);
+						fs.readdirSync(collectionPath).forEach(sDoc => {
+
+							let doc: any;
+							let docPath = path.join(collectionPath, sDoc);
+							Logger.debugln("Deserializing doc from: " + docPath);
+
+							try {
+								doc = BSON.deserialize(fs.readFileSync(docPath));
+							}
+							catch (err) {
+								Logger.error("Failed to deserialize backup document: " + docPath, err);
 								this.exit();
 								return;
 							}
-							else if (db) {
-								let collection = db.collection(sCollection);
-								let docBulk: object[] = [];
-		
-								let collectionPath = path.join(targetDir, sCollection);
-								fs.readdirSync(collectionPath).forEach(sDoc => {
-		
-									let doc: any;
-									let docPath = path.join(collectionPath, sDoc);
-									Logger.debugln("Deserializing doc from: " + docPath);
-		
-									try {
-										doc = BSON.deserialize(fs.readFileSync(docPath));
-									}
-									catch (err) {
-										Logger.error("Failed to deserialize backup document: " + docPath, err);
-										this.exit();
-										return;
-									}
-		
-									if (doc) docBulk.push({
-										insertOne: {
-											document: doc
-										}
-									});
-		
-								})
-		
-								let callback = (err: MongoError, result: any) => {
-									if (err) Logger.error(err);
-									if (result) Logger.info(`Restored collection '${sCollection}' from backup!`);
-									if (index == c.length - 1) {
-										Logger.success("Backup restore completed!");
-										this.exit();
-									}
+
+							if (doc) docBulk.push({
+								insertOne: {
+									document: doc
 								}
-		
-								if (docBulk.length > 0) {
-									collection.bulkWrite(docBulk, callback);
-								}
-								else {
-									db.createCollection(sCollection, callback);
-								}
+							});
+
+						})
+
+						let callback = (err: MongoError, result: any) => {
+							if (err) Logger.error(err);
+							if (result) Logger.info(`Restored collection '${sCollection}' from backup!`);
+							if (index == c.length - 1) {
+								Logger.success("Backup restore completed!");
+								this.exit();
 							}
 						}
-		
-						db.dropCollection(sCollection).then(resolve, () => { resolve(true) });
-		
-					})
-				})
-				
-			}
-			
+
+						if (docBulk.length > 0) {
+							collection.bulkWrite(docBulk, callback);
+						}
+						else {
+							db.createCollection(sCollection, callback);
+						}
+					}
+				}
+
+				db.dropCollection(sCollection).then(resolve, () => { resolve(true) });
+
+			})
 		})
 
 	}
@@ -233,7 +228,7 @@ export class BackupUtil {
 		let targetDir = Globals.flags.get("path") || dir || config.path || "";
 		if (targetDir.length == 0) {
 			Logger.warn("No path was provided and 'path' was unset in config.json!");
-			Logger.warn("Please specify a path with --path=<path>, or define 'path' in config.json.");
+			Logger.warn("Please specify a path with --path=PATH, or define 'path' in config.json.");
 			return;
 		}
 
@@ -244,8 +239,10 @@ export class BackupUtil {
 		}
 
 		let all = Globals.flags.isTrue(["all", "a"]);
+		let limit = Number(Globals.flags.get("limit") || config.lsLimit);
+		
 		if (all) Logger.println("Available backups:");
-		else Logger.println(`Available backups (last ${config.lsLimit}):`);
+		else Logger.println(`Available backups (last ${limit}):`);
 
 		let files = fs.readdirSync(targetDir || config.path);
 
@@ -255,7 +252,7 @@ export class BackupUtil {
 			if (a > b) return -1;
 			return 0;
 		})
-		
+
 		// remove elements that don't follow naming conventions
 		let offset = 0;
 		files.slice(0).forEach((s, i, a) => {
@@ -269,16 +266,54 @@ export class BackupUtil {
 			return;
 		}
 
-		let limit = config.lsLimit;
-
 		if (all) limit = files.length;
 
 		files.forEach((bakName, i) => {
-			if (i <= limit-1) {
+			if (i <= limit - 1) {
 				Logger.println(path.join(targetDir, bakName));
 			}
 		});
 
+	}
+
+	public schedule(): void {
+
+		let name = Globals.flags.get("name") || "MongoDB Backup";
+		let cronExp = Globals.args[0] || "";
+		if (cronExp.length == 0) cronExp = config.schedule;
+
+		let interval: any;
+		try {
+			interval = cronParser.parseExpression(cronExp);
+		}
+		catch (err) {
+			Logger.error("Invalid cron expression: " + cronExp);
+			return;
+		}
+
+		let fields: CronFields = interval._fields;
+		let scheduleSpec = {
+			second: fields.second, 
+			minute: fields.minute, 
+			hour: fields.hour, 
+			date: fields.dayOfMonth, 
+			dayOfWeek: fields.dayOfWeek
+		}
+
+		scheduleJobUtc(name, scheduleSpec, config.utcOffset, () => {
+			this.backup();
+			printNextInvocations();
+		});
+
+		printNextInvocations();
+		
+	}
+
+	public printHelp(): void {
+
+		let help = fs.readFileSync(path.resolve(__dirname, "../help.txt"));
+		Logger.println(sprintf(help.toString(), { configPath: path.resolve(__dirname, "config.json") }));
+		
 	}
 
 	public async exit(): Promise<void> {
@@ -286,6 +321,7 @@ export class BackupUtil {
 		if (this.dbRemote) {
 			await this.dbRemote.disconnect();
 		}
+		Logger.println("");
 		process.exit(0);
 
 	}

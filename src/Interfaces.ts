@@ -15,3 +15,12 @@ export interface OnceEventListenerDict {
         listeners: EventListener[]
     }
 }
+
+export interface CronFields {
+    second: number[],
+    minute: number[],
+    hour: number[],
+    dayOfMonth: number[],
+    month: number[],
+    dayOfWeek: number[]
+}

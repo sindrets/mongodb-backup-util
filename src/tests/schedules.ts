@@ -1,5 +1,4 @@
-import { BackupUtil } from "BackupUtil";
-import { scheduleJobUtc, TimeRange } from "misc/ScheduleJobUtc";
+import { printNextInvocations, scheduleJobUtc, TimeRange } from "misc/ScheduleJobUtc";
 
 scheduleJobUtc("test job", {
 		month: 2,
@@ -33,5 +32,5 @@ scheduleJobUtc("work days", {
 	}
 )
 
-BackupUtil.PrintNextInvocations();
+printNextInvocations();
 

@@ -1,0 +1,37 @@
+Usage: mbu [OPTIONS...] [PATH]
+mbu (mongodb-backup-util) is a utility that enables easy backup and restoration
+of any MongoDB database.
+
+Examples: 
+
+  mbu -la                                  # Lists all available backups
+  mbu -b                                   # Creates a new backup
+  mbu -b --db="fooBar" --path="~/backups"  # Creates a new backup of db "fooBar"
+                                           # in the directory "~/backups".
+  mbu -r ~/backups/fooBar-190401-091200    # Restores the db from the specified
+                                           # backup. 
+
+Operations:
+
+  -b, --backup                Creates a new backup.
+  -r, --restore               Restores a database from a specified backup.
+  -l, --list                  Lists all available backups.
+  -s, --schedule[=CRON-EXP]   Performs a backup on an interval specified by a
+                              cron expression.
+      --db=DB-NAME            Selects the specified database.
+      --path=PATH             Sets the target directory. During backup, this is
+                              the folder in which backups are created. During
+                              restore, this is the backup directory. During
+                              list, this is the directory that will be scanned
+                              for available backups.
+
+Schedule options:
+
+      --name=NAME             Sets the name of the schedule job.
+
+List options:
+
+  -a                          List all available backups.
+      --limit=INT             Set the max number of backups to display.
+
+Config path: %(configPath)s

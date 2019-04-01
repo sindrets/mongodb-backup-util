@@ -1,6 +1,8 @@
 import moment, { Moment } from "moment";
 import schedule, { Job } from "node-schedule";
 import { Utils } from "./Utils";
+import { Logger } from "Logger";
+import config from "config.json";
 
 export type RecurrenceDef = number | number[] | TimeRange;
 
@@ -149,5 +151,13 @@ export function scheduleJobUtc(name: string, spec: JobSpec, utcOffset: number, c
     if (spec.dayOfWeek != undefined) rule.dayOfWeek = values.dayOfWeek;
 
     return schedule.scheduleJob(name, rule, callback);
+
+}
+
+export function printNextInvocations(): void {
+
+    for (let job in schedule.scheduledJobs) {
+        Logger.info(`Job <${job}> next invocation: ` + schedule.scheduledJobs[job].nextInvocation());
+    }
 
 }

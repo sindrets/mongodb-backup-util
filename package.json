@@ -1,11 +1,12 @@
 {
   "name": "mongodb-backup-util",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "A node utility for creating and restoring backups of a MongoDB database.",
   "main": "out/Main.js",
   "scripts": {
     "start": "node out/Main.js",
     "build": "tsc",
+    "clean-build": "rm -rf ./out && tsc",
     "test": "echo \"Error: no test specified\" && exit 1",
     "debug": "npm run build && node out/Main.js --debug"
   },
@@ -29,6 +30,7 @@
   "dependencies": {
     "bson": "^4.0.2",
     "chalk": "^2.4.2",
+    "cron-parser": "^2.10.0",
     "get-cursor-position": "^1.0.5",
     "moment": "^2.24.0",
     "mongodb": "^3.2.2",
