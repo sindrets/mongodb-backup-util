@@ -35,3 +35,4 @@ List options:
       --limit=INT             Set the max number of backups to display.
 
 Config path: %(configPath)s
+Auth path:   %(authPath)s

@@ -9,7 +9,7 @@ import fs from "fs";
 import { Globals } from "Globals";
 import { CronFields } from "Interfaces";
 import { Logger } from "Logger";
-import { printNextInvocations, scheduleJobUtc } from "misc/ScheduleJobUtc";
+import { printNextInvocations, scheduleJobUtc, JobSpec } from "misc/ScheduleJobUtc";
 import { Utils } from "misc/Utils";
 import { MongoError } from "mongodb";
 import os from "os";
@@ -240,7 +240,7 @@ export class BackupUtil {
 
 		let all = Globals.flags.isTrue(["all", "a"]);
 		let limit = Number(Globals.flags.get("limit") || config.lsLimit);
-		
+
 		if (all) Logger.println("Available backups:");
 		else Logger.println(`Available backups (last ${limit}):`);
 
@@ -292,7 +292,7 @@ export class BackupUtil {
 		}
 
 		let fields: CronFields = interval._fields;
-		let scheduleSpec = {
+		let scheduleSpec: JobSpec = {
 			second: fields.second, 
 			minute: fields.minute, 
 			hour: fields.hour, 
@@ -312,7 +312,10 @@ export class BackupUtil {
 	public printHelp(): void {
 
 		let help = fs.readFileSync(path.resolve(__dirname, "../help.txt"));
-		Logger.println(sprintf(help.toString(), { configPath: path.resolve(__dirname, "config.json") }));
+		Logger.println(sprintf(help.toString(), { 
+			configPath: path.resolve(__dirname, "config.json"),
+			authPath: path.resolve(__dirname, "auth.json")
+		}));
 		
 	}
 
