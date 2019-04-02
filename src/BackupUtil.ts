@@ -16,7 +16,7 @@ import os from "os";
 import passPrompt from "password-prompt";
 import path from "path";
 import readline from "readline";
-import moment = require("moment");
+import moment = require("moment-timezone");
 import { sprintf } from "sprintf-js";
 
 export class BackupUtil {
@@ -279,28 +279,9 @@ export class BackupUtil {
 	public schedule(): void {
 
 		let name = Globals.flags.get("name") || "MongoDB Backup";
-		let cronExp = Globals.args[0] || "";
-		if (cronExp.length == 0) cronExp = config.schedule;
+		let cronExp = Globals.args[0] || config.schedule || "";
 
-		let interval: any;
-		try {
-			interval = cronParser.parseExpression(cronExp);
-		}
-		catch (err) {
-			Logger.error("Invalid cron expression: " + cronExp);
-			return;
-		}
-
-		let fields: CronFields = interval._fields;
-		let scheduleSpec: JobSpec = {
-			second: fields.second, 
-			minute: fields.minute, 
-			hour: fields.hour, 
-			date: fields.dayOfMonth, 
-			dayOfWeek: fields.dayOfWeek
-		}
-
-		scheduleJobUtc(name, scheduleSpec, config.utcOffset, () => {
+		scheduleJobUtc(name, cronExp, config.timezone || moment.tz.guess(), () => {
 			this.backup();
 			printNextInvocations();
 		});

@@ -134,12 +134,12 @@ export class Utils {
 	}
 
 	/**
-	 * Strips leading and trailing quotes if they are of the same type.
+	 * Strips leading and trailing quotes if they are of the same pair.
 	 * @param text 
 	 */
 	public static unquote(text: string): string {
 		let result = text;
-		let match = text.match(/((^(?!\\)["'`]).*((?<!\\)\2$))/g);
+		let match = text.match(/^(["'`])(?:(?=(\\?))\2.(?!\1.))*?\1$/g);
 		if (match) {
 			result = match[0].substr(1, match[0].length-2);
 		}

@@ -1,8 +1,9 @@
-import moment, { Moment } from "moment";
+import cronParser from "cron-parser";
+import { CronFields } from "Interfaces";
+import { Logger } from "Logger";
+import moment, { Moment } from "moment-timezone";
 import schedule, { Job } from "node-schedule";
 import { Utils } from "./Utils";
-import { Logger } from "Logger";
-import config from "config.json";
 
 export type RecurrenceDef = number | number[] | TimeRange;
 
@@ -30,7 +31,48 @@ export class TimeRange {
     
 }
 
-export function scheduleJobUtc(name: string, spec: JobSpec, utcOffset: number, callback: () => void): Job {
+/**
+ * Create a scheduled job with a utc offset.
+ * @param name The name of the schedule job.
+ * @param interval Either a JobSpec object or a Cron expression. 
+ * @param timezone An IANA timezone name.
+ * @param callback The callback to be executed on the job trigger.
+ */
+export function scheduleJobUtc(name: string, interval: JobSpec | string, timezone: string, callback: () => void): Job | null
+/**
+ * Create a scheduled job with a utc offset.
+ * @param name The name of the schedule job.
+ * @param interval Either a JobSpec object or a Cron expression. 
+ * @param utcOffset Utc offset in minutes.
+ * @param callback The callback to be executed on the job trigger.
+ */
+export function scheduleJobUtc(name: string, interval: JobSpec | string, utcOffset: number, callback: () => void): Job | null
+export function scheduleJobUtc(name: string, interval: JobSpec | string, utcOrTz: number | string, callback: () => void): Job | null {
+    
+    let options: JobSpec;
+    if (typeof interval == "string") {
+        let cronInterval: any;
+            try { cronInterval = cronParser.parseExpression(interval); }
+            catch (err) {
+                Logger.error("Invalid cron expression: " + interval);
+                return null;
+            }
+    
+            let fields: CronFields = cronInterval._fields;
+            options = {
+                second: fields.second, 
+                minute: fields.minute, 
+                hour: fields.hour, 
+                date: fields.dayOfMonth, 
+                dayOfWeek: fields.dayOfWeek
+            }
+    }
+    else options = interval;
+
+    let utcOffset = 0;
+    if (typeof utcOrTz == "string") {
+        utcOffset = moment.utc().tz(utcOrTz).utcOffset();
+    }
 
     let valueToArray = (value?: number | number[] | TimeRange): number[] => {
         
@@ -49,31 +91,31 @@ export function scheduleJobUtc(name: string, spec: JobSpec, utcOffset: number, c
 
     }
 
-    if (spec.second == undefined) spec.second = 0;
+    if (options.second == undefined) options.second = 0;
 
     let values = {
-        year: valueToArray(spec.year),
-        month: valueToArray(spec.month),
-        date: valueToArray(spec.date),
-        hour: valueToArray(spec.hour),
-        minute: valueToArray(spec.minute),
-        second: valueToArray(spec.second),
-        dayOfWeek: valueToArray(spec.dayOfWeek)
+        year: valueToArray(options.year),
+        month: valueToArray(options.month),
+        date: valueToArray(options.date),
+        hour: valueToArray(options.hour),
+        minute: valueToArray(options.minute),
+        second: valueToArray(options.second),
+        dayOfWeek: valueToArray(options.dayOfWeek)
     }
 
     let t0: Moment;
     let t1: Moment = moment.utc();
 
-    if (spec.year != undefined) t1.set("year", values.year[0]);
-    if (spec.month != undefined) t1.set("month", values.month[0]);
-    if (spec.date != undefined) t1.set("date", values.date[0]);
-    if (spec.hour != undefined) t1.set("hour", values.hour[0]);
-    if (spec.minute != undefined) t1.set("minute", values.minute[0]);
-    if (spec.second != undefined) t1.set("second", values.second[0]);
+    if (options.year != undefined) t1.set("year", values.year[0]);
+    if (options.month != undefined) t1.set("month", values.month[0]);
+    if (options.date != undefined) t1.set("date", values.date[0]);
+    if (options.hour != undefined) t1.set("hour", values.hour[0]);
+    if (options.minute != undefined) t1.set("minute", values.minute[0]);
+    if (options.second != undefined) t1.set("second", values.second[0]);
 
     let currentOffset = new Date().getTimezoneOffset();
     t0 = t1.clone();
-    t1.add((currentOffset + (utcOffset * 60)) / 60, "hours");
+    t1.add((-currentOffset - utcOffset), "minutes");
 
     let diffs: { [key: string]: number } = {
 
@@ -142,13 +184,13 @@ export function scheduleJobUtc(name: string, spec: JobSpec, utcOffset: number, c
     })
 
     let rule = new schedule.RecurrenceRule();
-    if (spec.year != undefined) rule.year = values.year;
-    if (spec.month != undefined) rule.month = values.month;
-    if (spec.date != undefined) rule.date = values.date;
-    if (spec.hour != undefined) rule.hour = values.hour;
-    if (spec.minute != undefined) rule.minute = values.minute;
-    if (spec.second != undefined) rule.second = values.second;
-    if (spec.dayOfWeek != undefined) rule.dayOfWeek = values.dayOfWeek;
+    if (options.year != undefined) rule.year = values.year;
+    if (options.month != undefined) rule.month = values.month;
+    if (options.date != undefined) rule.date = values.date;
+    if (options.hour != undefined) rule.hour = values.hour;
+    if (options.minute != undefined) rule.minute = values.minute;
+    if (options.second != undefined) rule.second = values.second;
+    if (options.dayOfWeek != undefined) rule.dayOfWeek = values.dayOfWeek;
 
     return schedule.scheduleJob(name, rule, callback);
 
