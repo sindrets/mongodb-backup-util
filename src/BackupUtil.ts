@@ -2,22 +2,21 @@ import auth from "auth.json";
 import * as BSON from "bson";
 import config from "config.json";
 import { GlobalEvent } from "Constants";
-import cronParser from "cron-parser";
 import { DbRemote } from "DbRemote";
 import { EventHandler } from "EventHandler";
 import fs from "fs";
 import { Globals } from "Globals";
-import { CronFields } from "Interfaces";
 import { Logger } from "Logger";
-import { printNextInvocations, scheduleJobUtc, JobSpec } from "misc/ScheduleJobUtc";
+import { printNextInvocations, scheduleJobUtc } from "misc/ScheduleJobUtc";
 import { Utils } from "misc/Utils";
 import { MongoError } from "mongodb";
 import os from "os";
 import passPrompt from "password-prompt";
 import path from "path";
 import readline from "readline";
-import moment = require("moment-timezone");
+import rimraf from "rimraf";
 import { sprintf } from "sprintf-js";
+import moment = require("moment-timezone");
 
 export class BackupUtil {
 
@@ -71,6 +70,14 @@ export class BackupUtil {
 		}
 
 		targetDir = this.resolvePath(targetDir);
+
+		let backups = this.scanBackups(targetDir, true) || [];
+		let i = backups.length - 1;
+		while (backups.length >= config.backupLimit) {
+			Logger.info("Removing: " + path.join(targetDir, backups[i]));
+			rimraf.sync(path.join(targetDir, backups[i]));
+			backups.splice(i--, 1);
+		}
 
 		this.dbRemote.connect().then(db => {
 			this.dbRemote.getAllCollections().then(collections => {
@@ -244,27 +251,7 @@ export class BackupUtil {
 		if (all) Logger.println("Available backups:");
 		else Logger.println(`Available backups (last ${limit}):`);
 
-		let files = fs.readdirSync(targetDir || config.path);
-
-		// sort files by name, descending
-		files = files.sort((a, b) => {
-			if (a < b) return 1;
-			if (a > b) return -1;
-			return 0;
-		})
-
-		// remove elements that don't follow naming conventions
-		let offset = 0;
-		files.slice(0).forEach((s, i, a) => {
-			if (s.match(this.BAK_NAME_PATTERN) == null) {
-				files.splice(i - offset++, 1);
-			}
-		})
-
-		if (files.length == 0) {
-			Logger.println("No backups found.");
-			return;
-		}
+		let files = this.scanBackups(targetDir || config.path, true) || [];
 
 		if (all) limit = files.length;
 
@@ -287,17 +274,47 @@ export class BackupUtil {
 		});
 
 		printNextInvocations();
-		
+
 	}
 
 	public printHelp(): void {
 
 		let help = fs.readFileSync(path.resolve(__dirname, "../help.txt"));
-		Logger.println(sprintf(help.toString(), { 
+		Logger.println(sprintf(help.toString(), {
 			configPath: path.resolve(__dirname, "config.json"),
 			authPath: path.resolve(__dirname, "auth.json")
 		}));
-		
+
+	}
+
+	public scanBackups(targetDir: string, sort = false): string[] | null {
+
+		if (!fs.existsSync(targetDir)) {
+			Logger.error("Scan Backups: The target directory does not exist: " + targetDir);
+			return null;
+		}
+
+		let files = fs.readdirSync(targetDir);
+
+		if (sort) {
+			// sort files by name, descending
+			files = files.sort((a, b) => {
+				if (a < b) return 1;
+				if (a > b) return -1;
+				return 0;
+			})
+		}
+
+		// remove elements that don't follow naming conventions
+		let offset = 0;
+		files.slice(0).forEach((s, i, a) => {
+			if (s.match(this.BAK_NAME_PATTERN) == null) {
+				files.splice(i - offset++, 1);
+			}
+		})
+
+		return files;
+
 	}
 
 	public async exit(): Promise<void> {

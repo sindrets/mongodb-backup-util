@@ -1,0 +1,8 @@
+{
+    "dbName": "",
+    "path": "",
+    "schedule": "0 0 3 * * ?",
+    "timezone": "Europe/Oslo",
+    "lsLimit": 5,
+    "backupLimit": 100
+}
