@@ -17,6 +17,8 @@ import readline from "readline";
 import rimraf from "rimraf";
 import { sprintf } from "sprintf-js";
 import moment = require("moment-timezone");
+import getCursorPos from "get-cursor-position";
+import { scheduledJobs } from "node-schedule";
 
 export class BackupUtil {
 
@@ -30,6 +32,11 @@ export class BackupUtil {
 		EventHandler.on(GlobalEvent.EXIT, () => { this.exit() }, true);
 		process.on("SIGINT", () => { this.exit() });
 		process.on("SIGABRT", () => { this.exit() });
+		process.on("unhandledRejection", (reason) => {
+			Logger.debugln("Unhandled rejection!");
+			Logger.debug("Reason: ");
+			Logger.debug(reason);
+		})
 
 		this.dbRemote = new DbRemote(Globals.flags.get("db"));
 
@@ -39,10 +46,38 @@ export class BackupUtil {
 		}
 
 		if (Globals.flags.isTrue(["help", "h"])) this.printHelp();
-		if (Globals.flags.isTrue(["backup", "b"])) this.backup();
-		if (Globals.flags.isTrue(["restore", "r"])) this.restore();
+		if (Globals.flags.isTrue(["backup", "b"])) {
+			let query;
+			let filter = Globals.flags.get("filter");
+			if (filter) {
+				try { query = eval(`(() => {return ${filter}})()`) }
+				catch {}
+			}
+			Logger.debug("Performing backup with filter: ");
+			Logger.debugln(query);
+			this.backup(query).then(
+				// resolve
+				() => { if (Object.keys(scheduledJobs).length == 0) this.exit() },
+				// reject
+				() => { this.exit(); }
+			);
+		}
+		if (Globals.flags.isTrue(["restore", "r"])) this.restore().then(
+			// resolve
+			() => { this.exit() },
+			// reject
+			() => { this.exit() }
+		);
 		if (Globals.flags.isTrue(["list", "l"])) this.printBackups(Globals.args[0]);
 		if (Globals.flags.isTrue(["schedule", "s"])) this.schedule();
+		if (Globals.flags.isTrue(["config-path"])) {
+			Logger.println(path.resolve(__dirname, "config.json"));
+			return;
+		}
+		if (Globals.flags.isTrue(["auth-path"])) {
+			Logger.println(path.resolve(__dirname, "auth.json"));
+			return;
+		}
 
 	}
 
@@ -61,121 +96,143 @@ export class BackupUtil {
 		if (this.rl) this.rl.close();
 	}
 
-	public async backup(query?: { [key: string]: any; } | { [x: string]: any; }) {
+	public async backup(query?: { [key: string]: any; } | { [x: string]: any; }): Promise<void> {
 
-		let targetDir = Globals.flags.get("path") || config.path;
-		if (targetDir.length == 0) {
-			Logger.error("Backup path was not provided nor defined in config.json!");
-			return;
-		}
+		return new Promise((resolve, reject) => {
 
-		targetDir = this.resolvePath(targetDir);
+			let targetDir = Globals.flags.get("path") || config.path;
+			if (targetDir.length == 0) {
+				let err = "Backup path was not provided nor defined in config.json!";
+				Logger.error(err);
+				reject(err);
+				return;
+			}
 
-		let backups = this.scanBackups(targetDir, true) || [];
-		let i = backups.length - 1;
-		while (backups.length >= config.backupLimit) {
-			Logger.info("Removing: " + path.join(targetDir, backups[i]));
-			rimraf.sync(path.join(targetDir, backups[i]));
-			backups.splice(i--, 1);
-		}
+			targetDir = this.resolvePath(targetDir);
 
-		this.dbRemote.connect().then(db => {
-			this.dbRemote.getAllCollections().then(collections => {
+			let backups = this.scanBackups(targetDir, true) || [];
+			let i = backups.length - 1;
+			while (backups.length >= config.backupLimit) {
+				Logger.info("Removing: " + path.join(targetDir, backups[i]));
+				rimraf.sync(path.join(targetDir, backups[i]));
+				backups.splice(i--, 1);
+			}
 
-				let now = moment();
+			this.dbRemote.connect().then(db => {
+				this.dbRemote.getAllCollections().then(collections => {
 
-				if (!fs.existsSync(targetDir)) {
-					fs.mkdirSync(targetDir);
-					Logger.info("Backup root folder created at: " + targetDir);
-				}
+					let now = moment();
 
-				let bakName: string = `${db.databaseName}-${now.format("YYMMDD-HHmmss")}`;
-				let bakPath: string = path.join(targetDir, bakName);
-				if (fs.existsSync(bakPath)) {
-					Logger.error("A backup by that name alreay exists: " + bakPath);
-					this.exit();
-					return;
-				}
-				else {
-					fs.mkdirSync(bakPath);
-					Logger.info("Created new backup folder at: " + bakPath);
-				}
+					if (!fs.existsSync(targetDir)) {
+						fs.mkdirSync(targetDir);
+						Logger.info("Backup root folder created at: " + targetDir);
+					}
 
-				collections.forEach((collection, index, c) => {
+					let bakName: string = `${db.databaseName}-${now.format("YYMMDD-HHmmss")}`;
+					let bakPath: string = path.join(targetDir, bakName);
+					if (fs.existsSync(bakPath)) {
+						let err = "A backup by that name alreay exists: " + bakPath;
+						Logger.error(err);
+						if (this.dbRemote) this.dbRemote.disconnect();
+						reject(err);
+						return;
+					}
+					else {
+						fs.mkdirSync(bakPath);
+						Logger.info("Created new backup folder at: " + bakPath);
+					}
 
-					let collectionPath = path.join(bakPath, collection.collectionName);
-					fs.mkdirSync(collectionPath);
+					collections.forEach((collection, index, c) => {
 
-					let stream = collection.find(query).stream();
+						let collectionPath = path.join(bakPath, collection.collectionName);
+						fs.mkdirSync(collectionPath);
 
-					stream.on("data", doc => {
+						let stream = collection.find(query).stream();
 
-						let docPath = path.join(collectionPath, String(doc._id) + ".bson");
-						fs.writeFileSync(docPath, BSON.serialize(doc));
-						Logger.info("Wrote serialized doc to: " + docPath);
+						stream.on("data", doc => {
+
+							let docPath = path.join(collectionPath, String(doc._id) + ".bson");
+							fs.writeFileSync(docPath, BSON.serialize(doc));
+							Logger.info("Wrote serialized doc to: " + docPath);
+
+						})
+
+						stream.on("end", () => {
+
+							if (index == c.length - 1) {
+								Logger.success("Backup created succsessfully!");
+								if (this.dbRemote) this.dbRemote.disconnect().then(resolve);
+							}
+
+						})
 
 					})
-
-					stream.on("end", () => {
-
-						if (index == c.length - 1) {
-							Logger.success("Backup created succsessfully!");
-							this.exit();
-						}
-
-					})
-
 				})
 			})
+
 		})
 
 	}
 
-	public async restore(force = false) {
+	public async restore(force = false): Promise<void> {
 
-		let targetDir = Globals.flags.get("path") || Globals.args[0] || "";
+		return new Promise(async (resolve, reject) => {
 
-		if (Globals.args[0] == "ls") {
-			this.printBackups();
-			return;
-		}
-		if (targetDir.length == 0) {
-			Logger.error("Restore path was not provided!");
-			return;
-		}
-		else if (!fs.existsSync(targetDir)) {
-			Logger.error("The provided restore point does not exist!");
-			return;
-		}
+			let targetDir = Globals.flags.get("path") || Globals.args[0] || "";
 
-		targetDir = this.resolvePath(targetDir);
+			if (Globals.args[0] == "ls") {
+				this.printBackups();
+				return resolve();
+			}
+			if (targetDir.length == 0) {
+				let err = "Restore path was not provided!";
+				Logger.error(err);
+				return reject(err);
+			}
+			else if (!fs.existsSync(targetDir)) {
+				let err = "The provided restore point does not exist!";
+				Logger.error(err);
+				return reject(err);
+			}
 
-		if (!force && path.basename(targetDir).match(this.BAK_NAME_PATTERN) == null) {
-			Logger.warn("The target dir does not follow the standard name pattern for an mbu backup: " + targetDir);
-			this.rlOpen().question("Are you sure you want to proceed? y/N: ", result => {
-				this.rlClose();
-				if (Utils.isYes(result, false)) this.restore(true);
-			});
-			return;
-		}
+			targetDir = this.resolvePath(targetDir);
 
-		let response: string = "";
-		Logger.println(`Enter password for user '${auth.DB_U}':`);
-		await passPrompt("Password: ", { method: "hide" }).then(resp => response = resp);
+			if (!force && path.basename(targetDir).match(this.BAK_NAME_PATTERN) == null) {
+				Logger.warn("The target dir does not follow the standard name pattern for an mbu backup: " + targetDir);
+				this.rlOpen().question("Are you sure you want to proceed? y/N: ", result => {
+					this.rlClose();
+					if (Utils.isYes(result, false)) this.restore(true);
+				});
+				return reject("User interrupt.");
+			}
 
-		if (response !== auth.DB_P) {
-			Logger.error("Authentication failure.");
-			return;
-		}
+			// TODO: add option to skip password check
+			let requirePassword = true;
+			if (requirePassword) {
+				let response: string = "";
+				let err = null;
+				Logger.println(`Enter password for user '${auth.DB_U}':`);
+				await passPrompt("Password: ", { method: "hide" }).then(resp => response = resp, (e) => { err = e });
 
-		this.dbRemote.connect().then(db => {
-			fs.readdirSync(targetDir).forEach((sCollection, index, c) => {
+				if (err) return reject(err);
+				if (response !== auth.DB_P) {
+					let error = "Authentication failure.";
+					Logger.error(error);
+					return reject(error);
+				}
+			}
 
-				let resolve = (success: boolean) => {
+			this.dbRemote.connect().then(db => {
+				fs.readdirSync(targetDir).forEach(async (sCollection, index, c) => {
+
+					let success: boolean = false;
+					await db.dropCollection(sCollection).then(result => { success = result }, () => { success = true });
+					Logger.debugln("Success: " + success);
+
 					if (!success) {
-						Logger.error("Failed to drop collection: " + sCollection);
-						this.exit();
-						return;
+						let err = "Failed to drop collection: " + sCollection;
+						Logger.error(err);
+						return reject(err);
 					}
 					else if (db) {
 						let collection = db.collection(sCollection);
@@ -192,9 +249,9 @@ export class BackupUtil {
 								doc = BSON.deserialize(fs.readFileSync(docPath));
 							}
 							catch (err) {
-								Logger.error("Failed to deserialize backup document: " + docPath, err);
-								this.exit();
-								return;
+								let reason = "Failed to deserialize backup document: " + docPath;
+								Logger.error(reason, err);
+								return reject(reason);
 							}
 
 							if (doc) docBulk.push({
@@ -210,7 +267,7 @@ export class BackupUtil {
 							if (result) Logger.info(`Restored collection '${sCollection}' from backup!`);
 							if (index == c.length - 1) {
 								Logger.success("Backup restore completed!");
-								this.exit();
+								if (this.dbRemote) this.dbRemote.disconnect().then(resolve);
 							}
 						}
 
@@ -221,11 +278,10 @@ export class BackupUtil {
 							db.createCollection(sCollection, callback);
 						}
 					}
-				}
 
-				db.dropCollection(sCollection).then(resolve, () => { resolve(true) });
-
+				})
 			})
+
 		})
 
 	}
@@ -266,11 +322,12 @@ export class BackupUtil {
 	public schedule(): void {
 
 		let name = Globals.flags.get("name") || "MongoDB Backup";
-		let cronExp = Globals.args[0] || config.schedule || "";
+		let cronExp = Globals.flags.get("schedule") || Globals.args[0] || config.schedule || "";
 
 		scheduleJobUtc(name, cronExp, config.timezone || moment.tz.guess(), () => {
-			this.backup();
-			printNextInvocations();
+			this.backup().then(() => {
+				printNextInvocations();
+			})
 		});
 
 		printNextInvocations();
@@ -319,10 +376,11 @@ export class BackupUtil {
 
 	public async exit(): Promise<void> {
 
+		let pos = getCursorPos.sync();
+		if (pos && pos.col != 1) Logger.println("");
 		if (this.dbRemote) {
 			await this.dbRemote.disconnect();
 		}
-		Logger.println("");
 		process.exit(0);
 
 	}

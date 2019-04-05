@@ -16,7 +16,7 @@ import { Logger } from "Logger";
 import { TestRunner } from "tests/testRunner";
 
 Globals.args = process.argv.slice(2);
-Globals.flags = FlagParser.parse(Globals.args, false);
+Globals.flags = FlagParser.parse(Globals.args, false, true);
 
 if (Globals.flags.isTrue("debug")) {
     Globals.DEBUG_MODE = true;

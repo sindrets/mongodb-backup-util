@@ -16,7 +16,7 @@ export class DbRemote {
     private db: Db | undefined;
 
     constructor(dbName?: string) {
-        this.uri = sprintf(auth.DB_SRV, auth.DB_U, auth.DB_P);
+        this.uri = sprintf(auth.DB_SRV, auth.DB_U, encodeURI(auth.DB_P));
         this.dbName = dbName != undefined ? dbName : config.dbName;
     }
 
@@ -72,6 +72,7 @@ export class DbRemote {
 	public async disconnect(): Promise<void> {
 
         return new Promise<void>((resolve, reject) => {
+            if (!this.connected) return resolve();
             if (this.dbClient) {
                 this.dbClient.close().then(
                     () => {

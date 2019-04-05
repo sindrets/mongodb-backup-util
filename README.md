@@ -1,3 +1,7 @@
+# MongoDB Backup Util
+
+## Usage
+```
 Usage: mbu [OPTIONS...] [ARGS...]
 mbu (mongodb-backup-util) is a utility that enables easy backup and restoration
 of any MongoDB database.
@@ -51,5 +55,38 @@ List options:
       --path=PATH             The directory that will be scanned for available
                               backups. Overrides config.
 
-Config path: %(configPath)s
-Auth path:   %(authPath)s
+```
+
+## Config
+
+`out/config.json`:
+```json
+{
+  "dbName": "fooBarDB",
+  "path": "~/backups",
+  "schedule": "0 3 * * *",
+  "timezone": "Europe/Oslo",
+  "lsLimit": 5,
+  "backupLimit": 100
+}
+```
+
+* `dbName`: The name of the db to backup / restore.
+* `path`: The directory in which backups will be created.
+* `schedule`: A cron expression determining the interval of the schedule operation.
+* `timezone`: An IANA timezone name. Used to adjust the UTC offset on schedule invocation times such that the jobs will always fire on the specified time, in the specified timezone, regardless of the timezone settings of the host machine.
+* `lsLimit`: The number of backups to display during list.
+* `backupLimit`: The max number of backups to keep in the backup folder. After reaching the limit, the oldest backups will be deleted upon creating new ones. Set the value to `-1` to disable the limit.
+
+`out/auth.json`:
+```json
+{
+  "DB_SRV": "mongodb+srv://%s:%s@<cluster-name>.mongodb.net/test?retryWrites=true",
+  "DB_U": "<username>",
+  "DB_P": "<password>"
+}
+```
+
+* `DB_SRV`: The connection string to your cluster with both username and password replaced with `%s`.
+* `DB_U`: Username.
+* `DB_P`: Password. It will be URI encoded automatically. 
