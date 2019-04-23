@@ -57,7 +57,11 @@ export class Logger {
      * @param optionalParams 
      */
     public static info(message?: any, ...optionalParams: any[]): void {
-        console.log(chalk.blue("INFO: " + message), ...optionalParams);
+        if (typeof message === "string") {
+            message = chalk.blue(message);
+        }
+        process.stdout.write(chalk.blue("INFO: "));
+        console.log(message, ...optionalParams);
     }
 
     /**
@@ -66,7 +70,10 @@ export class Logger {
      * @param optionalParams 
      */
     public static success(message?: any, ...optionalParams: any[]): void {
-        console.log(chalk.green(message), ...optionalParams);
+        if (typeof message === "string") {
+            message = chalk.green(message);
+        }
+        console.log(message, ...optionalParams);
     }
 
     /**
@@ -75,7 +82,11 @@ export class Logger {
      * @param optionalParams 
      */
     public static warn(message?: any, ...optionalParams: any[]): void {
-        console.log(chalk.yellowBright("WARNING: " + message), ...optionalParams);
+        if (typeof message === "string") {
+            message = chalk.yellowBright(message);
+        }
+        process.stdout.write(chalk.yellowBright("WARNING: "));
+        console.log(message, ...optionalParams);
     }
 
     /**
@@ -84,7 +95,10 @@ export class Logger {
      * @param optionalParams 
      */
     public static error(message?: any, ...optionalParams: any[]): void {
-        console.error(chalk.red(message), ...optionalParams);
+        if (typeof message === "string") {
+            message = chalk.red(message);
+        }
+        else console.error(message, ...optionalParams);
     }
 
 }

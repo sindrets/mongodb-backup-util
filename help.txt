@@ -2,18 +2,6 @@ Usage: mbu [OPTIONS...] [ARGS...]
 mbu (mongodb-backup-util) is a utility that enables easy backup and restoration
 of any MongoDB database.
 
-Examples: 
-
-  mbu -la                                  # Lists all available backups
-  mbu -b                                   # Creates a new backup
-  mbu -b --db="fooBar" --path="~/backups"  # Creates a new backup of db "fooBar"
-                                           # in the directory "~/backups".
-  mbu -b --filter="{ qty: { $gt: 4 }"      # Selects only the documents where
-                                           # the field 'qty' is greater than 4.
-  mbu -r ~/backups/fooBar-190401-091200    # Restores the db from the specified
-                                           # backup.
-  mbu -s "0 3 * * *"                       # Schedule a backup for 3am every day
-
 Operations:
 
   -h, --help                  Prints this help text.
@@ -50,6 +38,18 @@ List options:
       --limit=INT             Set the max number of backups to display.
       --path=PATH             The directory that will be scanned for available
                               backups. Overrides config.
+
+Examples: 
+
+  mbu -la                                  # Lists all available backups
+  mbu -b                                   # Creates a new backup
+  mbu -b --db="fooBar" --path="~/backups"  # Creates a new backup of db "fooBar"
+                                           # in the directory "~/backups".
+  mbu -b --filter="{ qty: { $gt: 4 }"      # Selects only the documents where
+                                           # the field 'qty' is greater than 4.
+  mbu -r ~/backups/fooBar-190401-091200    # Restores the db from the specified
+                                           # backup.
+  mbu -s "0 3 * * *"                       # Schedule a backup for 3am every day
 
 Config path: %(configPath)s
 Auth path:   %(authPath)s
