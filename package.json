@@ -33,7 +33,9 @@
     "prompt": "^1.0.0",
     "rimraf": "^2.6.3",
     "sprintf-js": "^1.1.2",
-    "stringify-object": "^3.3.0"
+    "stringify-object": "^3.3.0",
+    "tar": "^4.4.8",
+    "tmp": "^0.1.0"
   },
   "devDependencies": {
     "@types/moment-timezone": "^0.5.12",
@@ -42,6 +44,8 @@
     "@types/node-schedule": "^1.2.3",
     "@types/rimraf": "^2.0.2",
     "@types/sprintf-js": "^1.1.2",
-    "@types/stringify-object": "^3.2.0"
+    "@types/stringify-object": "^3.2.0",
+    "@types/tar": "^4.0.0",
+    "@types/tmp": "^0.1.0"
   }
 }

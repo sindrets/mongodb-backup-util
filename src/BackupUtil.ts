@@ -5,24 +5,26 @@ import { GlobalEvent } from "Constants";
 import { DbRemote } from "DbRemote";
 import { EventHandler } from "EventHandler";
 import fs from "fs";
+import getCursorPos from "get-cursor-position";
 import { Globals } from "Globals";
 import { Logger } from "Logger";
 import { printNextInvocations, scheduleJobUtc } from "misc/ScheduleJobUtc";
 import { Utils } from "misc/Utils";
 import { MongoError } from "mongodb";
+import { scheduledJobs } from "node-schedule";
 import os from "os";
 import passPrompt from "password-prompt";
 import path from "path";
 import readline from "readline";
 import rimraf from "rimraf";
 import { sprintf } from "sprintf-js";
+import tar from "tar";
+import tmp from "tmp";
 import moment = require("moment-timezone");
-import getCursorPos from "get-cursor-position";
-import { scheduledJobs } from "node-schedule";
 
 export class BackupUtil {
 
-	private readonly BAK_NAME_PATTERN = /^.*-[0-9]{6}-[0-9]{6}$/g;
+	private readonly BAK_NAME_PATTERN = /^.*-[0-9]{6}-[0-9]{6}\.tgz$/g;
 
 	private dbRemote: DbRemote;
 	private rl?: readline.Interface;
@@ -35,8 +37,8 @@ export class BackupUtil {
 		process.on("unhandledRejection", (reason) => {
 			Logger.debugln("Unhandled rejection!");
 			Logger.debug("Reason: ");
-			Logger.debug(reason);
-		})
+			Logger.debugln(reason);
+		});
 
 		this.dbRemote = new DbRemote(Globals.flags.get("db"));
 
@@ -110,12 +112,14 @@ export class BackupUtil {
 
 			targetDir = this.resolvePath(targetDir);
 
-			let backups = this.scanBackups(targetDir, true) || [];
-			let i = backups.length - 1;
-			while (backups.length >= config.backupLimit) {
-				Logger.info("Removing: " + path.join(targetDir, backups[i]));
-				rimraf.sync(path.join(targetDir, backups[i]));
-				backups.splice(i--, 1);
+			if (config.backupLimit < 0) {
+				let backups = this.scanBackups(targetDir, true) || [];
+				let i = backups.length - 1;
+				while (backups.length >= config.backupLimit && i >= 0) {
+					Logger.info("Removing: " + path.join(targetDir, backups[i]));
+					rimraf.sync(path.join(targetDir, backups[i]));
+					backups.splice(i--, 1);
+				}
 			}
 
 			this.dbRemote.connect().then(db => {
@@ -124,12 +128,15 @@ export class BackupUtil {
 					let now = moment();
 
 					if (!fs.existsSync(targetDir)) {
-						fs.mkdirSync(targetDir);
+						fs.mkdirSync(targetDir, { recursive: true });
 						Logger.info("Backup root folder created at: " + targetDir);
 					}
 
 					let bakName: string = `${db.databaseName}-${now.format("YYMMDD-HHmmss")}`;
-					let bakPath: string = path.join(targetDir, bakName);
+					let bakPath: string = path.join(targetDir, bakName + ".tgz");
+					let tmpdir = tmp.dirSync();
+					let tmpPath: string = path.join(tmpdir.name, bakName);
+					
 					if (fs.existsSync(bakPath)) {
 						let err = "A backup by that name alreay exists: " + bakPath;
 						Logger.error(err);
@@ -138,13 +145,13 @@ export class BackupUtil {
 						return;
 					}
 					else {
-						fs.mkdirSync(bakPath);
-						Logger.info("Created new backup folder at: " + bakPath);
+						fs.mkdirSync(tmpPath);
+						Logger.debugln("Created new temp folder at: " + tmpPath);
 					}
 
 					collections.forEach((collection, index, c) => {
 
-						let collectionPath = path.join(bakPath, collection.collectionName);
+						let collectionPath = path.join(tmpPath, collection.collectionName);
 						fs.mkdirSync(collectionPath);
 
 						let stream = collection.find(query).stream();
@@ -153,13 +160,15 @@ export class BackupUtil {
 
 							let docPath = path.join(collectionPath, String(doc._id) + ".bson");
 							fs.writeFileSync(docPath, BSON.serialize(doc));
-							Logger.info("Wrote serialized doc to: " + docPath);
+							Logger.debugln("Wrote serialized doc to: " + docPath);
 
 						})
 
-						stream.on("end", () => {
+						stream.on("end", async () => {
 
 							if (index == c.length - 1) {
+								await tar.create({ gzip: true, file: bakPath, cwd: tmpPath }, ["."]);
+								Logger.info(`Created new backup at: ${bakPath}`);
 								Logger.success("Backup created succsessfully!");
 								if (this.dbRemote) this.dbRemote.disconnect().then(resolve);
 							}
@@ -167,7 +176,9 @@ export class BackupUtil {
 						})
 
 					})
+
 				})
+
 			})
 
 		})
@@ -178,27 +189,24 @@ export class BackupUtil {
 
 		return new Promise(async (resolve, reject) => {
 
-			let targetDir = Globals.flags.get("path") || Globals.args[0] || "";
-
-			if (Globals.args[0] == "ls") {
-				this.printBackups();
-				return resolve();
-			}
-			if (targetDir.length == 0) {
+			let targetFile = Globals.flags.get("path") || Globals.args[0] || "";
+			
+			if (targetFile.length == 0) {
 				let err = "Restore path was not provided!";
 				Logger.error(err);
 				return reject(err);
 			}
-			else if (!fs.existsSync(targetDir)) {
+			else if (!fs.existsSync(targetFile)) {
 				let err = "The provided restore point does not exist!";
 				Logger.error(err);
 				return reject(err);
 			}
 
-			targetDir = this.resolvePath(targetDir);
+			targetFile = this.resolvePath(targetFile);
+			let tmpdir = tmp.dirSync();
 
-			if (!force && path.basename(targetDir).match(this.BAK_NAME_PATTERN) == null) {
-				Logger.warn("The target dir does not follow the standard name pattern for an mbu backup: " + targetDir);
+			if (!force && path.basename(targetFile).match(this.BAK_NAME_PATTERN) == null) {
+				Logger.warn("The target file does not follow the standard name pattern for an mbu backup: " + targetFile);
 				this.rlOpen().question("Are you sure you want to proceed? y/N: ", result => {
 					this.rlClose();
 					if (Utils.isYes(result, false)) this.restore(true);
@@ -222,8 +230,10 @@ export class BackupUtil {
 				}
 			}
 
+			await tar.extract({ file: targetFile, cwd: tmpdir.name });
+
 			this.dbRemote.connect().then(db => {
-				fs.readdirSync(targetDir).forEach(async (sCollection, index, c) => {
+				fs.readdirSync(tmpdir.name).forEach(async (sCollection, index, c) => {
 
 					let success: boolean = false;
 					await db.dropCollection(sCollection).then(result => { success = result }, () => { success = true });
@@ -238,7 +248,7 @@ export class BackupUtil {
 						let collection = db.collection(sCollection);
 						let docBulk: object[] = [];
 
-						let collectionPath = path.join(targetDir, sCollection);
+						let collectionPath = path.join(tmpdir.name, sCollection);
 						fs.readdirSync(collectionPath).forEach(sDoc => {
 
 							let doc: any;
@@ -254,11 +264,7 @@ export class BackupUtil {
 								return reject(reason);
 							}
 
-							if (doc) docBulk.push({
-								insertOne: {
-									document: doc
-								}
-							});
+							if (doc) docBulk.push({ insertOne: { document: doc } });
 
 						})
 
